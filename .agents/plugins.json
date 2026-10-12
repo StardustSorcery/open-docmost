@@ -1,0 +1,10 @@
+{
+  "entries": [
+    {
+      "path": "tools/agent-toolkit/plugins",
+      "include_only": [
+        "core"
+      ]
+    }
+  ]
+}
