@@ -99,6 +99,7 @@ describe('OidcAuthService', () => {
 
     mockOpenIdClient = {
       discovery: jest.fn().mockResolvedValue({} as any),
+      allowInsecureRequests: jest.fn(),
       randomPKCECodeVerifier: jest.fn().mockReturnValue('verifier'),
       calculatePKCECodeChallenge: jest.fn().mockResolvedValue('challenge'),
       randomState: jest.fn().mockReturnValue('state123'),

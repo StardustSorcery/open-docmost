@@ -82,10 +82,16 @@ export class OidcAuthService {
 
     const openidClient = await loadOpenIdClient();
     const issuerUrl = new URL(provider.oidcIssuer);
+    const discoveryOptions =
+      issuerUrl.protocol === 'http:' && openidClient.allowInsecureRequests
+        ? { execute: [openidClient.allowInsecureRequests] }
+        : undefined;
     const config = await openidClient.discovery(
       issuerUrl,
       provider.oidcClientId,
       decryptedSecret || undefined,
+      undefined,
+      discoveryOptions,
     );
 
     const codeVerifier = openidClient.randomPKCECodeVerifier();
@@ -170,10 +176,16 @@ export class OidcAuthService {
 
     const openidClient = await loadOpenIdClient();
     const issuerUrl = new URL(provider.oidcIssuer);
+    const discoveryOptions =
+      issuerUrl.protocol === 'http:' && openidClient.allowInsecureRequests
+        ? { execute: [openidClient.allowInsecureRequests] }
+        : undefined;
     const config = await openidClient.discovery(
       issuerUrl,
       provider.oidcClientId,
       decryptedSecret || undefined,
+      undefined,
+      discoveryOptions,
     );
 
     const appUrl = this.environmentService.getAppUrl();
