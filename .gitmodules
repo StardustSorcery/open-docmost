@@ -3,4 +3,4 @@
 	url = https://github.com/docmost/ee
 [submodule "tools/agent-toolkit"]
 	path = tools/agent-toolkit
-	url = https://github.com/StardustSorcery/agent-toolkit
+	url = git@github.com:StardustSorcery/agent-toolkit.git
