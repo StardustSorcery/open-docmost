@@ -89,7 +89,11 @@ export class SsoProviderService implements OnApplicationBootstrap {
   }
 
   async getProviders(workspaceId: string): Promise<AuthProvider[]> {
-    const providers = await this.authProviderRepo.findByWorkspaceId(workspaceId);
+    let providers = await this.authProviderRepo.findByWorkspaceId(workspaceId);
+    if (providers.length === 0 && process.env.OIDC_ISSUER) {
+      await this.syncFromEnvironmentVariables();
+      providers = await this.authProviderRepo.findByWorkspaceId(workspaceId);
+    }
     return providers.map((p) => this.decryptProvider(p));
   }
 

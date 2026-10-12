@@ -9,7 +9,7 @@ export async function loadOpenIdClient(): Promise<OpenIdClientModule> {
     return cachedClient;
   }
   // Load Pure-ESM openid-client dynamically in CommonJS environment
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+   
   const importFn = new Function('specifier', 'return import(specifier)');
   const mod = await importFn('openid-client');
   cachedClient = mod as OpenIdClientModule;

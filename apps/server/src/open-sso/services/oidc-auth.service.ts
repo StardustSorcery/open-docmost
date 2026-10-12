@@ -177,7 +177,9 @@ export class OidcAuthService {
     );
 
     const appUrl = this.environmentService.getAppUrl();
-    const currentUrl = new URL(requestUrl || `/api/sso/oidc/${provider.id}/callback?${new URLSearchParams(query as Record<string, string>).toString()}`, appUrl);
+    const callbackPath = `/api/sso/oidc/${provider.id}/callback`;
+    const searchParams = new URLSearchParams(query as Record<string, string>).toString();
+    const currentUrl = new URL(`${callbackPath}?${searchParams}`, appUrl);
 
     let tokens: openidClientTypes.TokenEndpointResponse & openidClientTypes.TokenEndpointResponseHelpers;
     try {
@@ -197,6 +199,11 @@ export class OidcAuthService {
       throw new UnauthorizedException('OIDC token did not contain sub claim');
     }
 
+    const emailVerified = claims?.email_verified;
+    if (emailVerified === false || (emailVerified as any) === 'false') {
+      throw new UnauthorizedException('Email address is not verified by OIDC provider');
+    }
+
     let email = claims?.email as string | undefined;
     let name = claims?.name as string | undefined;
 
@@ -207,11 +214,23 @@ export class OidcAuthService {
           tokens.access_token,
           sub,
         );
+        const userInfoEmailVerified = userInfo?.email_verified;
+        if (
+          userInfoEmailVerified === false ||
+          (userInfoEmailVerified as any) === 'false'
+        ) {
+          throw new UnauthorizedException(
+            'Email address is not verified by OIDC provider',
+          );
+        }
         email = userInfo?.email as string | undefined;
         if (!name) {
           name = userInfo?.name as string | undefined;
         }
       } catch (err: any) {
+        if (err instanceof UnauthorizedException) {
+          throw err;
+        }
         this.logger.warn(`Failed to fetch userInfo: ${err.message}`);
       }
     }
@@ -234,37 +253,57 @@ export class OidcAuthService {
 
     validateAllowedEmail(email, workspace);
 
-    // 1. Check existing AuthAccount
-    const existingAccount = await this.authAccountRepo.findByProviderUserId(
-      sub,
-      provider.id,
+    // 1. Look for existing user by email (email is the primary unique key)
+    const existingUser = await this.userRepo.findByEmail(
+      email.toLowerCase(),
+      workspace.id,
     );
 
     let user: User;
 
-    if (existingAccount) {
-      const foundUser = await this.userRepo.findById(
-        existingAccount.userId,
-        workspace.id,
-      );
-      if (!foundUser || isUserDisabled(foundUser)) {
-        throw new UnauthorizedException('User account is disabled or not found');
+    if (existingUser) {
+      if (isUserDisabled(existingUser)) {
+        throw new UnauthorizedException('User account is disabled');
       }
-      user = foundUser;
-    } else {
-      // 2. Look for existing user by email
-      const existingUser = await this.userRepo.findByEmail(email, workspace.id);
-      if (existingUser) {
-        if (isUserDisabled(existingUser)) {
-          throw new UnauthorizedException('User account is disabled');
-        }
+      user = existingUser;
+
+      // Link AuthAccount if not linked yet
+      const linkedAccount = await this.authAccountRepo.findByProviderUserId(
+        sub,
+        provider.id,
+      );
+      if (!linkedAccount) {
         await this.authAccountRepo.insertAccount({
-          userId: existingUser.id,
+          userId: user.id,
           providerUserId: sub,
           authProviderId: provider.id,
           workspaceId: workspace.id,
         });
-        user = existingUser;
+      }
+
+      if (!user.emailVerifiedAt) {
+        await this.userRepo.updateUser(
+          { emailVerifiedAt: new Date() },
+          user.id,
+          workspace.id,
+        );
+      }
+    } else {
+      // 2. Check existing AuthAccount by providerUserId as fallback
+      const existingAccount = await this.authAccountRepo.findByProviderUserId(
+        sub,
+        provider.id,
+      );
+
+      if (existingAccount) {
+        const foundUser = await this.userRepo.findById(
+          existingAccount.userId,
+          workspace.id,
+        );
+        if (!foundUser || isUserDisabled(foundUser)) {
+          throw new UnauthorizedException('User account is disabled or not found');
+        }
+        user = foundUser;
       } else {
         // 3. Register new user
         if (!provider.allowSignup) {
@@ -358,6 +397,37 @@ export class OidcAuthService {
     };
   }
 
+  private getGroupMappings(): Map<string, string> {
+    const raw = process.env.OIDC_GROUP_MAPPINGS;
+    const mapping = new Map<string, string>();
+    if (!raw || !raw.trim()) {
+      return mapping;
+    }
+    try {
+      if (raw.trim().startsWith('{')) {
+        const parsed = JSON.parse(raw);
+        for (const [idpGroup, docmostGroup] of Object.entries(parsed)) {
+          if (typeof docmostGroup === 'string') {
+            mapping.set(idpGroup.trim().toLowerCase(), docmostGroup.trim());
+          }
+        }
+        return mapping;
+      }
+    } catch (err: any) {
+      this.logger.warn(`Failed to parse OIDC_GROUP_MAPPINGS as JSON: ${err.message}`);
+    }
+
+    // Fallback: comma-separated key:value
+    const pairs = raw.split(',');
+    for (const pair of pairs) {
+      const [k, v] = pair.split(':');
+      if (k && v) {
+        mapping.set(k.trim().toLowerCase(), v.trim());
+      }
+    }
+    return mapping;
+  }
+
   private async syncGroups(
     userId: string,
     workspaceId: string,
@@ -367,20 +437,37 @@ export class OidcAuthService {
       return;
     }
 
-    const groupNames = groupsClaim
-      .filter((g): g is string => typeof g === 'string' && g.trim().length > 0)
-      .map((g) => g.trim());
-
-    if (groupNames.length === 0) {
+    const mappings = this.getGroupMappings();
+    // If no mappings are configured, ignore all external groups per requirements
+    if (mappings.size === 0) {
       return;
     }
 
+    const incomingIdpGroups = new Set(
+      groupsClaim
+        .filter((g): g is string => typeof g === 'string' && g.trim().length > 0)
+        .map((g) => g.trim().toLowerCase()),
+    );
+
+    // Determine target Docmost group names to grant (ignore unmapped groups)
+    const targetDocmostGroupNames = new Set<string>();
+    for (const idpGroup of incomingIdpGroups) {
+      const mappedDocmostName = mappings.get(idpGroup);
+      if (mappedDocmostName) {
+        targetDocmostGroupNames.add(mappedDocmostName);
+      }
+    }
+
+    // All Docmost group names managed by this OIDC mapping
+    const allManagedDocmostGroupNames = Array.from(mappings.values());
+
     try {
-      for (const groupName of groupNames) {
-        let group = await this.groupRepo.findByName(groupName, workspaceId);
+      // 1. Grant mapped groups
+      for (const docmostGroupName of targetDocmostGroupNames) {
+        let group = await this.groupRepo.findByName(docmostGroupName, workspaceId);
         if (!group) {
           group = await this.groupRepo.insertGroup({
-            name: groupName,
+            name: docmostGroupName,
             isDefault: false,
             isExternal: true,
             workspaceId,
@@ -399,6 +486,26 @@ export class OidcAuthService {
           });
         }
       }
+
+      // 2. Revoke unassigned managed groups
+      const userGroupIds = await this.groupUserRepo.getUserGroupIds(userId);
+      for (const groupId of userGroupIds) {
+        const group = await this.groupRepo.findById(groupId, workspaceId);
+        if (!group || group.isDefault) {
+          continue; // Protect default group (e.g. Everyone)
+        }
+
+        const isManaged = allManagedDocmostGroupNames.some(
+          (name) => name.toLowerCase() === group.name.toLowerCase(),
+        );
+        const shouldKeep = Array.from(targetDocmostGroupNames).some(
+          (name) => name.toLowerCase() === group.name.toLowerCase(),
+        );
+
+        if (isManaged && !shouldKeep) {
+          await this.groupUserRepo.delete(userId, group.id);
+        }
+      }
     } catch (err: any) {
       this.logger.warn(`Group sync error: ${err.message}`);
     }
@@ -406,9 +513,23 @@ export class OidcAuthService {
 
   public sanitizeRedirectUrl(redirect?: string): string {
     if (!redirect) return '/';
-    // Ensure relative path starting with / but not // or /\
-    if (redirect.startsWith('/') && !redirect.startsWith('//') && !redirect.startsWith('/\\')) {
-      return redirect;
+    // Reject protocol-relative or backslash-based paths
+    if (redirect.startsWith('//') || redirect.startsWith('/\\')) {
+      return '/';
+    }
+    try {
+      const appUrl = new URL(this.environmentService.getAppUrl());
+      const parsed = new URL(redirect, appUrl);
+      if (
+        parsed.origin === appUrl.origin &&
+        (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+        !parsed.pathname.startsWith('//') &&
+        !parsed.pathname.startsWith('/\\')
+      ) {
+        return parsed.pathname + parsed.search + parsed.hash;
+      }
+    } catch {
+      // ignore
     }
     return '/';
   }

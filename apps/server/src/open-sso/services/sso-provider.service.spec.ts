@@ -55,6 +55,35 @@ describe('SsoProviderService', () => {
       expect(providers).toHaveLength(1);
       expect(providers[0].oidcClientSecret).toBe('secret123');
     });
+
+    it('should trigger on-demand sync from env if no providers exist and OIDC_ISSUER is set', async () => {
+      process.env.OIDC_ISSUER = 'https://issuer.example.com';
+      process.env.OIDC_CLIENT_ID = 'cid';
+      process.env.OIDC_CLIENT_SECRET = 'csecret';
+
+      workspaceRepo.findFirst.mockResolvedValue({ id: 'w1' } as any);
+      authProviderRepo.findByWorkspaceId
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          {
+            id: 'p-new',
+            name: 'OIDC',
+            type: 'oidc',
+            oidcClientSecret: 'enc:csecret',
+            workspaceId: 'w1',
+          } as any,
+        ]);
+      authProviderRepo.findFirstByType.mockResolvedValue(undefined);
+
+      const providers = await service.getProviders('w1');
+
+      expect(authProviderRepo.insertProvider).toHaveBeenCalled();
+      expect(providers).toHaveLength(1);
+
+      delete process.env.OIDC_ISSUER;
+      delete process.env.OIDC_CLIENT_ID;
+      delete process.env.OIDC_CLIENT_SECRET;
+    });
   });
 
   describe('createProvider', () => {
