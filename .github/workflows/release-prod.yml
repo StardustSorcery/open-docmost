@@ -1,0 +1,59 @@
+name: Production Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - '!v*-beta*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Production version tag (e.g. v0.25.3)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  prepare:
+    if: github.repository_owner != 'docmost'
+    runs-on: ubuntu-latest
+    outputs:
+      tags: ${{ steps.parse.outputs.tags }}
+      release_tag: ${{ steps.parse.outputs.release_tag }}
+      ref: ${{ steps.parse.outputs.ref }}
+    steps:
+      - name: Parse prod tag
+        id: parse
+        run: |
+          RAW_TAG="${{ inputs.version || github.ref_name }}"
+          echo "Raw tag: $RAW_TAG"
+          if [[ "$RAW_TAG" =~ ^v?([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            MAJOR="${BASH_REMATCH[1]}"
+            MINOR="${BASH_REMATCH[2]}"
+            PATCH="${BASH_REMATCH[3]}"
+            TAG_XYZ="${MAJOR}.${MINOR}.${PATCH}"
+            TAG_XY="${MAJOR}.${MINOR}"
+            TAG_X="${MAJOR}"
+            echo "Parsed tags: $TAG_XYZ $TAG_XY $TAG_X latest"
+            echo "tags=${TAG_XYZ} ${TAG_XY} ${TAG_X} latest" >> "$GITHUB_OUTPUT"
+            echo "release_tag=${RAW_TAG}" >> "$GITHUB_OUTPUT"
+            echo "ref=${RAW_TAG}" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Tag '$RAW_TAG' does not match expected format 'vX.Y.Z'!"
+            exit 1
+          fi
+
+  build-and-publish:
+    needs: prepare
+    if: github.repository_owner != 'docmost'
+    uses: ./.github/workflows/_build_and_publish.yml
+    with:
+      ref: ${{ needs.prepare.outputs.ref }}
+      tags: ${{ needs.prepare.outputs.tags }}
+      create_release: true
+      is_prerelease: false
+      release_tag: ${{ needs.prepare.outputs.release_tag }}
+    secrets: inherit

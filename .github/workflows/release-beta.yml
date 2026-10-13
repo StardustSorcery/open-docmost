@@ -1,0 +1,53 @@
+name: Beta Release
+
+on:
+  push:
+    tags:
+      - 'v*-beta*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Beta version tag (e.g. v0.25.3-beta.1)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  prepare:
+    if: github.repository_owner != 'docmost'
+    runs-on: ubuntu-latest
+    outputs:
+      tags: ${{ steps.parse.outputs.tags }}
+      release_tag: ${{ steps.parse.outputs.release_tag }}
+      ref: ${{ steps.parse.outputs.ref }}
+    steps:
+      - name: Parse beta tag
+        id: parse
+        run: |
+          RAW_TAG="${{ inputs.version || github.ref_name }}"
+          echo "Raw tag: $RAW_TAG"
+          if [[ "$RAW_TAG" =~ ^v?([0-9]+\.[0-9]+\.[0-9]+-beta)(\.[0-9]+)?$ ]]; then
+            BASE_BETA="${BASH_REMATCH[1]}"
+            echo "Base beta tag: $BASE_BETA"
+            echo "tags=${BASE_BETA} latest" >> "$GITHUB_OUTPUT"
+            echo "release_tag=${RAW_TAG}" >> "$GITHUB_OUTPUT"
+            echo "ref=${RAW_TAG}" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Tag '$RAW_TAG' does not match expected format 'vX.Y.Z-beta.N' or 'vX.Y.Z-beta'!"
+            exit 1
+          fi
+
+  build-and-publish:
+    needs: prepare
+    if: github.repository_owner != 'docmost'
+    uses: ./.github/workflows/_build_and_publish.yml
+    with:
+      ref: ${{ needs.prepare.outputs.ref }}
+      tags: ${{ needs.prepare.outputs.tags }}
+      create_release: true
+      is_prerelease: true
+      release_tag: ${{ needs.prepare.outputs.release_tag }}
+    secrets: inherit
