@@ -83,6 +83,8 @@ export class SsoProviderService implements OnApplicationBootstrap {
       process.env.OIDC_ALLOW_SIGNUP === 'false' ? false : true;
     const groupSync = process.env.OIDC_GROUP_SYNC === 'true';
     const name = process.env.OIDC_DISPLAY_NAME || 'OIDC';
+    const providerId =
+      process.env.OIDC_PROVIDER_ID || '00000000-0000-4000-8000-000000000001';
 
     const encryptedSecret = this.encryptSecret(clientSecret);
 
@@ -91,6 +93,7 @@ export class SsoProviderService implements OnApplicationBootstrap {
         `Auto-configuring OIDC provider from environment variables for workspace: ${workspace.id}`,
       );
       await this.authProviderRepo.insertProvider({
+        ...(providerId ? { id: providerId } : {}),
         name,
         type: 'oidc',
         oidcIssuer: issuer,

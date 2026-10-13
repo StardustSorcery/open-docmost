@@ -100,7 +100,9 @@ export class OidcAuthService {
     const nonce = openidClient.randomNonce();
 
     const appUrl = this.environmentService.getAppUrl();
-    const redirectUri = `${appUrl}/api/sso/oidc/${provider.id}/callback`;
+    const redirectUri =
+      process.env.OIDC_REDIRECT_URI ||
+      `${appUrl}/api/sso/oidc/${provider.id}/callback`;
 
     const authUrl = openidClient.buildAuthorizationUrl(config, {
       redirect_uri: redirectUri,
@@ -131,7 +133,7 @@ export class OidcAuthService {
   }
 
   async handleCallback(
-    providerId: string,
+    providerId: string | undefined,
     query: { code?: string; state?: string; error?: string; error_description?: string },
     cookieRaw?: string,
     requestUrl?: string,
@@ -161,11 +163,12 @@ export class OidcAuthService {
       throw new BadRequestException('Invalid OIDC state mismatch');
     }
 
-    if (sessionState.providerId !== providerId) {
+    if (providerId && sessionState.providerId !== providerId) {
       throw new BadRequestException('OIDC provider ID mismatch');
     }
 
-    const provider = await this.authProviderRepo.findEnabledById(providerId);
+    const targetProviderId = providerId || sessionState.providerId;
+    const provider = await this.authProviderRepo.findEnabledById(targetProviderId);
     if (!provider || provider.type !== 'oidc') {
       throw new NotFoundException('OIDC provider not found or disabled');
     }
@@ -189,7 +192,9 @@ export class OidcAuthService {
     );
 
     const appUrl = this.environmentService.getAppUrl();
-    const callbackPath = `/api/sso/oidc/${provider.id}/callback`;
+    const callbackPath = process.env.OIDC_REDIRECT_URI
+      ? new URL(process.env.OIDC_REDIRECT_URI, appUrl).pathname
+      : `/api/sso/oidc/${provider.id}/callback`;
     const searchParams = new URLSearchParams(query as Record<string, string>).toString();
     const currentUrl = new URL(`${callbackPath}?${searchParams}`, appUrl);
 

@@ -240,4 +240,51 @@ describe('SsoProviderService', () => {
       expect(workspaceRepo.updateWorkspace).not.toHaveBeenCalled();
     });
   });
+
+  describe('syncFromEnvironmentVariables (OIDC_PROVIDER_ID)', () => {
+    const originalEnv = process.env;
+
+    beforeEach(() => {
+      process.env = { ...originalEnv };
+      process.env.OIDC_ISSUER = 'https://issuer.example.com';
+      process.env.OIDC_CLIENT_ID = 'cid';
+      process.env.OIDC_CLIENT_SECRET = 'csecret';
+    });
+
+    afterEach(() => {
+      process.env = originalEnv;
+    });
+
+    it('should use specified OIDC_PROVIDER_ID when inserting new provider', async () => {
+      process.env.OIDC_PROVIDER_ID = 'custom-uuid-1234';
+      workspaceRepo.findFirst.mockResolvedValue({ id: 'w1' } as any);
+      authProviderRepo.findFirstByType.mockResolvedValue(undefined);
+
+      await service.syncFromEnvironmentVariables();
+
+      expect(authProviderRepo.insertProvider).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'custom-uuid-1234',
+          name: 'OIDC',
+          type: 'oidc',
+        }),
+      );
+    });
+
+    it('should use default deterministic fallback UUID when OIDC_PROVIDER_ID is omitted', async () => {
+      delete process.env.OIDC_PROVIDER_ID;
+      workspaceRepo.findFirst.mockResolvedValue({ id: 'w1' } as any);
+      authProviderRepo.findFirstByType.mockResolvedValue(undefined);
+
+      await service.syncFromEnvironmentVariables();
+
+      expect(authProviderRepo.insertProvider).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: '00000000-0000-4000-8000-000000000001',
+          name: 'OIDC',
+          type: 'oidc',
+        }),
+      );
+    });
+  });
 });
