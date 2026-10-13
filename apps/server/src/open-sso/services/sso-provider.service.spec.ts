@@ -26,6 +26,7 @@ describe('SsoProviderService', () => {
 
     workspaceRepo = {
       findFirst: jest.fn(),
+      updateWorkspace: jest.fn(),
     } as any;
 
     service = new SsoProviderService(
@@ -168,6 +169,75 @@ describe('SsoProviderService', () => {
         'p1',
         'w1',
       );
+    });
+  });
+
+  describe('syncFromEnvironmentVariables (OIDC_ENFORCE)', () => {
+    const originalEnv = process.env;
+
+    beforeEach(() => {
+      process.env = { ...originalEnv };
+      delete process.env.OIDC_ENFORCE;
+      delete process.env.OIDC_ISSUER;
+      delete process.env.OIDC_CLIENT_ID;
+      delete process.env.OIDC_CLIENT_SECRET;
+    });
+
+    afterEach(() => {
+      process.env = originalEnv;
+    });
+
+    it('should enforce SSO on workspace when OIDC_ENFORCE is true', async () => {
+      process.env.OIDC_ENFORCE = 'true';
+      workspaceRepo.findFirst.mockResolvedValue({
+        id: 'w1',
+        enforceSso: false,
+      } as any);
+
+      await service.syncFromEnvironmentVariables();
+
+      expect(workspaceRepo.updateWorkspace).toHaveBeenCalledWith(
+        { enforceSso: true },
+        'w1',
+      );
+    });
+
+    it('should not update workspace when OIDC_ENFORCE is true and workspace already enforces SSO', async () => {
+      process.env.OIDC_ENFORCE = 'true';
+      workspaceRepo.findFirst.mockResolvedValue({
+        id: 'w1',
+        enforceSso: true,
+      } as any);
+
+      await service.syncFromEnvironmentVariables();
+
+      expect(workspaceRepo.updateWorkspace).not.toHaveBeenCalled();
+    });
+
+    it('should disable SSO enforcement on workspace when OIDC_ENFORCE is false', async () => {
+      process.env.OIDC_ENFORCE = 'false';
+      workspaceRepo.findFirst.mockResolvedValue({
+        id: 'w1',
+        enforceSso: true,
+      } as any);
+
+      await service.syncFromEnvironmentVariables();
+
+      expect(workspaceRepo.updateWorkspace).toHaveBeenCalledWith(
+        { enforceSso: false },
+        'w1',
+      );
+    });
+
+    it('should not update workspace when OIDC_ENFORCE is not set', async () => {
+      workspaceRepo.findFirst.mockResolvedValue({
+        id: 'w1',
+        enforceSso: false,
+      } as any);
+
+      await service.syncFromEnvironmentVariables();
+
+      expect(workspaceRepo.updateWorkspace).not.toHaveBeenCalled();
     });
   });
 });
