@@ -26,7 +26,7 @@ export class SsoProviderService implements OnApplicationBootstrap {
     await this.syncFromEnvironmentVariables();
   }
 
-  private async syncFromEnvironmentVariables() {
+  async syncFromEnvironmentVariables() {
     const issuer = process.env.OIDC_ISSUER;
     const clientId = process.env.OIDC_CLIENT_ID;
     const clientSecret = process.env.OIDC_CLIENT_SECRET;
@@ -55,7 +55,9 @@ export class SsoProviderService implements OnApplicationBootstrap {
       const encryptedSecret = this.encryptSecret(clientSecret);
 
       if (!existing) {
-        this.logger.log(`Auto-configuring OIDC provider from environment variables for workspace: ${workspace.id}`);
+        this.logger.log(
+          `Auto-configuring OIDC provider from environment variables for workspace: ${workspace.id}`,
+        );
         await this.authProviderRepo.insertProvider({
           name,
           type: 'oidc',
@@ -68,7 +70,9 @@ export class SsoProviderService implements OnApplicationBootstrap {
           workspaceId: workspace.id,
         });
       } else if (process.env.OIDC_OVERWRITE_ON_STARTUP === 'true') {
-        this.logger.log(`Updating OIDC provider from environment variables for workspace: ${workspace.id}`);
+        this.logger.log(
+          `Updating OIDC provider from environment variables for workspace: ${workspace.id}`,
+        );
         await this.authProviderRepo.updateProvider(
           {
             name,
@@ -84,7 +88,9 @@ export class SsoProviderService implements OnApplicationBootstrap {
         );
       }
     } catch (err: any) {
-      this.logger.warn(`Failed to sync OIDC provider from environment variables: ${err.message}`);
+      this.logger.warn(
+        `Failed to sync OIDC provider from environment variables: ${err.message}`,
+      );
     }
   }
 
@@ -145,7 +151,8 @@ export class SsoProviderService implements OnApplicationBootstrap {
 
     if (dto.name !== undefined) updateData.name = dto.name;
     if (dto.oidcIssuer !== undefined) updateData.oidcIssuer = dto.oidcIssuer;
-    if (dto.oidcClientId !== undefined) updateData.oidcClientId = dto.oidcClientId;
+    if (dto.oidcClientId !== undefined)
+      updateData.oidcClientId = dto.oidcClientId;
     if (dto.isEnabled !== undefined) updateData.isEnabled = dto.isEnabled;
     if (dto.allowSignup !== undefined) updateData.allowSignup = dto.allowSignup;
     if (dto.groupSync !== undefined) updateData.groupSync = dto.groupSync;
@@ -167,10 +174,7 @@ export class SsoProviderService implements OnApplicationBootstrap {
     return this.decryptProvider(updated);
   }
 
-  async deleteProvider(
-    providerId: string,
-    workspaceId: string,
-  ): Promise<void> {
+  async deleteProvider(providerId: string, workspaceId: string): Promise<void> {
     const existing = await this.authProviderRepo.findById(
       providerId,
       workspaceId,
