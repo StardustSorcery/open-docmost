@@ -32,10 +32,7 @@ export class HeadlessSetupService implements OnApplicationBootstrap {
         return false;
       }
 
-      const adminEmail =
-        process.env.SETUP_ADMIN_EMAIL ||
-        process.env.INITIAL_ADMIN_EMAIL ||
-        process.env.ADMIN_EMAIL;
+      const adminEmail = process.env.SETUP_ADMIN_EMAIL;
 
       if (!adminEmail) {
         return false;
@@ -48,15 +45,10 @@ export class HeadlessSetupService implements OnApplicationBootstrap {
         return false;
       }
 
-      const isRandomPassword =
-        !process.env.SETUP_ADMIN_PASSWORD &&
-        !process.env.INITIAL_ADMIN_PASSWORD &&
-        !process.env.ADMIN_PASSWORD;
+      const isRandomPassword = !process.env.SETUP_ADMIN_PASSWORD;
 
       const adminPassword =
         process.env.SETUP_ADMIN_PASSWORD ||
-        process.env.INITIAL_ADMIN_PASSWORD ||
-        process.env.ADMIN_PASSWORD ||
         crypto.randomBytes(32).toString('hex');
 
       if (isRandomPassword) {
@@ -65,17 +57,9 @@ export class HeadlessSetupService implements OnApplicationBootstrap {
         );
       }
 
-      const adminName =
-        process.env.SETUP_ADMIN_NAME ||
-        process.env.INITIAL_ADMIN_NAME ||
-        process.env.ADMIN_NAME ||
-        'Admin';
+      const adminName = process.env.SETUP_ADMIN_NAME || 'Admin';
 
-      const workspaceName =
-        process.env.SETUP_WORKSPACE_NAME ||
-        process.env.INITIAL_WORKSPACE_NAME ||
-        process.env.WORKSPACE_NAME ||
-        'Docmost';
+      const workspaceName = process.env.SETUP_WORKSPACE_NAME || 'Docmost';
 
       const result = await this.signupService.initialSetup({
         name: adminName,

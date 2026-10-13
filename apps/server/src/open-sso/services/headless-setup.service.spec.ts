@@ -17,17 +17,9 @@ describe('HeadlessSetupService', () => {
 
     // Clean up relevant environment variables
     delete process.env.SETUP_ADMIN_EMAIL;
-    delete process.env.INITIAL_ADMIN_EMAIL;
-    delete process.env.ADMIN_EMAIL;
     delete process.env.SETUP_ADMIN_PASSWORD;
-    delete process.env.INITIAL_ADMIN_PASSWORD;
-    delete process.env.ADMIN_PASSWORD;
     delete process.env.SETUP_ADMIN_NAME;
-    delete process.env.INITIAL_ADMIN_NAME;
-    delete process.env.ADMIN_NAME;
     delete process.env.SETUP_WORKSPACE_NAME;
-    delete process.env.INITIAL_WORKSPACE_NAME;
-    delete process.env.WORKSPACE_NAME;
 
     workspaceRepo = {
       count: jest.fn(),
@@ -169,65 +161,6 @@ describe('HeadlessSetupService', () => {
       expect(
         ssoProviderService.syncFromEnvironmentVariables,
       ).toHaveBeenCalledTimes(1);
-    });
-
-    describe('alias environment variables', () => {
-      it('should work with INITIAL_ADMIN_EMAIL, INITIAL_ADMIN_PASSWORD, INITIAL_WORKSPACE_NAME', async () => {
-        // Arrange
-        workspaceRepo.count.mockResolvedValue(0);
-        process.env.INITIAL_ADMIN_EMAIL = 'initial-admin@example.com';
-        process.env.INITIAL_ADMIN_PASSWORD = 'initpassword123';
-        process.env.INITIAL_WORKSPACE_NAME = 'Initial Corp';
-
-        signupService.initialSetup.mockResolvedValue({
-          user: { id: 'user-1' } as any,
-          workspace: { id: 'ws-1' } as any,
-        });
-
-        // Act
-        const result = await service.performHeadlessSetup();
-
-        // Assert
-        expect(result).toBe(true);
-        expect(signupService.initialSetup).toHaveBeenCalledWith({
-          name: 'Admin',
-          email: 'initial-admin@example.com',
-          password: 'initpassword123',
-          workspaceName: 'Initial Corp',
-        });
-        expect(
-          ssoProviderService.syncFromEnvironmentVariables,
-        ).toHaveBeenCalledTimes(1);
-      });
-
-      it('should work with ADMIN_EMAIL, ADMIN_PASSWORD, WORKSPACE_NAME, ADMIN_NAME', async () => {
-        // Arrange
-        workspaceRepo.count.mockResolvedValue(0);
-        process.env.ADMIN_EMAIL = 'admin-fallback@example.com';
-        process.env.ADMIN_PASSWORD = 'fallbackpassword123';
-        process.env.ADMIN_NAME = 'Custom Admin Name';
-        process.env.WORKSPACE_NAME = 'Fallback Workspace';
-
-        signupService.initialSetup.mockResolvedValue({
-          user: { id: 'user-1' } as any,
-          workspace: { id: 'ws-1' } as any,
-        });
-
-        // Act
-        const result = await service.performHeadlessSetup();
-
-        // Assert
-        expect(result).toBe(true);
-        expect(signupService.initialSetup).toHaveBeenCalledWith({
-          name: 'Custom Admin Name',
-          email: 'admin-fallback@example.com',
-          password: 'fallbackpassword123',
-          workspaceName: 'Fallback Workspace',
-        });
-        expect(
-          ssoProviderService.syncFromEnvironmentVariables,
-        ).toHaveBeenCalledTimes(1);
-      });
     });
 
     describe('error handling', () => {
