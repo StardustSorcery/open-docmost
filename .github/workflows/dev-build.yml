@@ -1,0 +1,24 @@
+name: Dev Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch, tag, or commit hash to build'
+        required: true
+        default: 'main'
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-and-publish:
+    if: github.repository_owner != 'docmost'
+    uses: ./.github/workflows/_build_and_publish.yml
+    with:
+      ref: ${{ inputs.ref }}
+      tags: latest
+      create_release: false
+    secrets: inherit

@@ -1,21 +1,35 @@
-name: Release to GHCR
+name: Build and Publish Image
 
 on:
-  push:
-    tags:
-      - 'v*'
-  workflow_dispatch:
+  workflow_call:
     inputs:
-      version:
-        description: 'Version tag (e.g. v0.25.3)'
+      ref:
+        description: 'Git ref to checkout'
         required: true
+        type: string
+      tags:
+        description: 'Space-separated tags to publish'
+        required: true
+        type: string
+      create_release:
+        description: 'Whether to create a GitHub Release'
+        required: false
+        default: false
+        type: boolean
+      is_prerelease:
+        description: 'Whether the release is a prerelease'
+        required: false
+        default: false
+        type: boolean
+      release_tag:
+        description: 'Git tag for GitHub Release'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: write
   packages: write
-
-env:
-  VERSION: ${{ inputs.version || github.ref_name }}
 
 jobs:
   build:
@@ -34,6 +48,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.ref }}
           submodules: false
 
       - name: Checkout available submodules
@@ -77,33 +92,44 @@ jobs:
           path: /tmp/digests/*
           if-no-files-found: error
 
-      - name: Strip v prefix
-        id: strip-v
-        run: echo "version=${VERSION#v}" >> "$GITHUB_OUTPUT"
+      - name: Determine image export tags
+        if: inputs.create_release
+        id: export-tags
+        run: |
+          EXPORT_TAGS=()
+          for tag in ${{ inputs.tags }}; do
+            EXPORT_TAGS+=("ghcr.io/${IMAGE_NAME}:${tag}")
+          done
+          {
+            echo "tags<<EOF"
+            printf "%s\n" "${EXPORT_TAGS[@]}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Export Docker image
+        if: inputs.create_release
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: ${{ matrix.platform }}
           push: false
-          tags: |
-            ghcr.io/${{ env.IMAGE_NAME }}:latest
-            ghcr.io/${{ env.IMAGE_NAME }}:${{ steps.strip-v.outputs.version }}
+          tags: ${{ steps.export-tags.outputs.tags }}
           outputs: type=docker,dest=docmost-${{ matrix.suffix }}.docker.tar
           cache-from: type=gha,scope=${{ matrix.suffix }}
 
       - name: Compress image
+        if: inputs.create_release
         run: gzip docmost-${{ matrix.suffix }}.docker.tar
 
       - name: Upload image archive
+        if: inputs.create_release
         uses: actions/upload-artifact@v4
         with:
           name: docker-image-${{ matrix.suffix }}
           path: docmost-${{ matrix.suffix }}.docker.tar.gz
           if-no-files-found: error
 
-  release:
+  publish:
     needs: build
     if: github.repository_owner != 'docmost'
     runs-on: ubuntu-latest
@@ -128,23 +154,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata for tags
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ env.IMAGE_NAME }}
-          tags: |
-            type=semver,pattern={{version}},value=${{ env.VERSION }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ env.VERSION }},enable=${{ !contains(env.VERSION, '-') }}
-            type=raw,value=latest,enable=${{ !contains(env.VERSION, '-') }}
-
       - name: Create manifest list and push
         working-directory: /tmp/digests
         run: |
-          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+          TAG_FLAGS=()
+          for tag in ${{ inputs.tags }}; do
+            TAG_FLAGS+=("-t" "ghcr.io/${IMAGE_NAME}:${tag}")
+          done
+          docker buildx imagetools create "${TAG_FLAGS[@]}" \
             $(printf 'ghcr.io/${{ env.IMAGE_NAME }}@sha256:%s ' *)
 
       - name: Download image archives
+        if: inputs.create_release
         uses: actions/download-artifact@v4
         with:
           pattern: docker-image-*
@@ -152,9 +173,13 @@ jobs:
           merge-multiple: true
 
       - name: Create GitHub Release
+        if: inputs.create_release
         uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ env.VERSION }}
+          tag_name: ${{ inputs.release_tag }}
+          prerelease: ${{ inputs.is_prerelease }}
           files: |
             /tmp/images/docmost-amd64.docker.tar.gz
             /tmp/images/docmost-arm64.docker.tar.gz
