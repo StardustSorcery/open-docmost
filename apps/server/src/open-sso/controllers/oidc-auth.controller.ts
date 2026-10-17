@@ -49,9 +49,18 @@ export class OidcAuthController {
     }
   }
 
+  @Get('callback')
+  async staticCallback(
+    @Query() query: { code?: string; state?: string; error?: string; error_description?: string },
+    @Req() req: FastifyRequest,
+    @Res() res: FastifyReply,
+  ) {
+    return this.callback(undefined as any, query, req, res);
+  }
+
   @Get(':providerId/callback')
   async callback(
-    @Param('providerId') providerId: string,
+    @Param('providerId') providerId: string | undefined,
     @Query() query: { code?: string; state?: string; error?: string; error_description?: string },
     @Req() req: FastifyRequest,
     @Res() res: FastifyReply,

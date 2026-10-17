@@ -9,7 +9,7 @@ import { AuthProviderRepo } from '../repos/auth-provider.repo';
 import { EncryptionService } from '../../integrations/encryption/encryption.service';
 import { CreateSsoProviderDto } from '../dto/create-sso-provider.dto';
 import { UpdateSsoProviderDto } from '../dto/update-sso-provider.dto';
-import { AuthProvider } from '@docmost/db/types/entity.types';
+import { AuthProvider, Workspace } from '@docmost/db/types/entity.types';
 import { WorkspaceRepo } from '@docmost/db/repos/workspace/workspace.repo';
 
 @Injectable()
@@ -26,7 +26,45 @@ export class SsoProviderService implements OnApplicationBootstrap {
     await this.syncFromEnvironmentVariables();
   }
 
-  private async syncFromEnvironmentVariables() {
+  async syncFromEnvironmentVariables() {
+    try {
+      const workspace = await this.workspaceRepo.findFirst();
+      if (!workspace) {
+        return;
+      }
+
+      await this.syncOidcEnforce(workspace);
+      await this.syncOidcProvider(workspace);
+    } catch (err: any) {
+      this.logger.warn(
+        `Failed to sync OIDC configuration from environment variables: ${err.message}`,
+      );
+    }
+  }
+
+  private async syncOidcEnforce(workspace: Workspace) {
+    if (process.env.OIDC_ENFORCE === 'true') {
+      if (!workspace.enforceSso) {
+        this.logger.log(`Enforcing SSO for workspace: ${workspace.id}`);
+        await this.workspaceRepo.updateWorkspace(
+          { enforceSso: true },
+          workspace.id,
+        );
+      }
+    } else if (process.env.OIDC_ENFORCE === 'false') {
+      if (workspace.enforceSso) {
+        this.logger.log(
+          `Disabling SSO enforcement for workspace: ${workspace.id}`,
+        );
+        await this.workspaceRepo.updateWorkspace(
+          { enforceSso: false },
+          workspace.id,
+        );
+      }
+    }
+  }
+
+  private async syncOidcProvider(workspace: Workspace) {
     const issuer = process.env.OIDC_ISSUER;
     const clientId = process.env.OIDC_CLIENT_ID;
     const clientSecret = process.env.OIDC_CLIENT_SECRET;
@@ -35,56 +73,54 @@ export class SsoProviderService implements OnApplicationBootstrap {
       return;
     }
 
-    try {
-      const workspace = await this.workspaceRepo.findFirst();
-      if (!workspace) {
-        return;
-      }
+    const existing = await this.authProviderRepo.findFirstByType(
+      'oidc',
+      workspace.id,
+    );
 
-      const existing = await this.authProviderRepo.findFirstByType(
-        'oidc',
-        workspace.id,
+    const isEnabled = process.env.OIDC_ENABLED === 'false' ? false : true;
+    const allowSignup =
+      process.env.OIDC_ALLOW_SIGNUP === 'false' ? false : true;
+    const groupSync = process.env.OIDC_GROUP_SYNC === 'true';
+    const name = process.env.OIDC_DISPLAY_NAME || 'OIDC';
+    const providerId =
+      process.env.OIDC_PROVIDER_ID || '00000000-0000-4000-8000-000000000001';
+
+    const encryptedSecret = this.encryptSecret(clientSecret);
+
+    if (!existing) {
+      this.logger.log(
+        `Auto-configuring OIDC provider from environment variables for workspace: ${workspace.id}`,
       );
-
-      const isEnabled = process.env.OIDC_ENABLED === 'false' ? false : true;
-      const allowSignup =
-        process.env.OIDC_ALLOW_SIGNUP === 'false' ? false : true;
-      const groupSync = process.env.OIDC_GROUP_SYNC === 'true';
-      const name = process.env.OIDC_DISPLAY_NAME || 'OIDC';
-
-      const encryptedSecret = this.encryptSecret(clientSecret);
-
-      if (!existing) {
-        this.logger.log(`Auto-configuring OIDC provider from environment variables for workspace: ${workspace.id}`);
-        await this.authProviderRepo.insertProvider({
+      await this.authProviderRepo.insertProvider({
+        ...(providerId ? { id: providerId } : {}),
+        name,
+        type: 'oidc',
+        oidcIssuer: issuer,
+        oidcClientId: clientId,
+        oidcClientSecret: encryptedSecret,
+        isEnabled,
+        allowSignup,
+        groupSync,
+        workspaceId: workspace.id,
+      });
+    } else if (process.env.OIDC_OVERWRITE_ON_STARTUP === 'true') {
+      this.logger.log(
+        `Updating OIDC provider from environment variables for workspace: ${workspace.id}`,
+      );
+      await this.authProviderRepo.updateProvider(
+        {
           name,
-          type: 'oidc',
           oidcIssuer: issuer,
           oidcClientId: clientId,
           oidcClientSecret: encryptedSecret,
           isEnabled,
           allowSignup,
           groupSync,
-          workspaceId: workspace.id,
-        });
-      } else if (process.env.OIDC_OVERWRITE_ON_STARTUP === 'true') {
-        this.logger.log(`Updating OIDC provider from environment variables for workspace: ${workspace.id}`);
-        await this.authProviderRepo.updateProvider(
-          {
-            name,
-            oidcIssuer: issuer,
-            oidcClientId: clientId,
-            oidcClientSecret: encryptedSecret,
-            isEnabled,
-            allowSignup,
-            groupSync,
-          },
-          existing.id,
-          workspace.id,
-        );
-      }
-    } catch (err: any) {
-      this.logger.warn(`Failed to sync OIDC provider from environment variables: ${err.message}`);
+        },
+        existing.id,
+        workspace.id,
+      );
     }
   }
 
@@ -145,7 +181,8 @@ export class SsoProviderService implements OnApplicationBootstrap {
 
     if (dto.name !== undefined) updateData.name = dto.name;
     if (dto.oidcIssuer !== undefined) updateData.oidcIssuer = dto.oidcIssuer;
-    if (dto.oidcClientId !== undefined) updateData.oidcClientId = dto.oidcClientId;
+    if (dto.oidcClientId !== undefined)
+      updateData.oidcClientId = dto.oidcClientId;
     if (dto.isEnabled !== undefined) updateData.isEnabled = dto.isEnabled;
     if (dto.allowSignup !== undefined) updateData.allowSignup = dto.allowSignup;
     if (dto.groupSync !== undefined) updateData.groupSync = dto.groupSync;
@@ -167,10 +204,7 @@ export class SsoProviderService implements OnApplicationBootstrap {
     return this.decryptProvider(updated);
   }
 
-  async deleteProvider(
-    providerId: string,
-    workspaceId: string,
-  ): Promise<void> {
+  async deleteProvider(providerId: string, workspaceId: string): Promise<void> {
     const existing = await this.authProviderRepo.findById(
       providerId,
       workspaceId,
