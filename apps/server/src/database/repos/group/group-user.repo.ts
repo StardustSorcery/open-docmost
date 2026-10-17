@@ -168,9 +168,9 @@ export class GroupUserRepo {
   async delete(
     userId: string,
     groupId: string,
-    opts?: { trx?: KyselyTransaction },
+    opts: { trx?: KyselyTransaction } = {},
   ): Promise<void> {
-    const { trx } = opts;
+    const { trx } = opts || {};
     const db = dbOrTx(this.db, trx);
 
     await db

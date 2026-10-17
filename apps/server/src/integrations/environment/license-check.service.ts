@@ -27,6 +27,10 @@ export class LicenseCheckService {
   }
 
   hasFeature(licenseKey: string, feature: string, plan?: string): boolean {
+    if (feature === 'sso:custom') {
+      return true;
+    }
+
     if (this.environmentService.isCloud()) {
       try {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -50,26 +54,31 @@ export class LicenseCheckService {
   }
 
   getFeatures(licenseKey: string): string[] {
+    const baseFeatures = ['sso:custom'];
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const LicenseModule = require('../../ee/licence/license.service');
       const licenseService = this.moduleRef.get(LicenseModule.LicenseService, {
         strict: false,
       });
-      return licenseService.getFeatures(licenseKey);
+      const features = licenseService.getFeatures(licenseKey) || [];
+      return Array.from(new Set([...features, ...baseFeatures]));
     } catch {
-      return [];
+      return baseFeatures;
     }
   }
 
   resolveFeatures(licenseKey: string, plan: string): string[] {
+    const baseFeatures = ['sso:custom'];
     if (this.environmentService.isCloud()) {
       try {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { getFeaturesForCloudPlan } = require('../../ee/licence/feature-registry');
-        return [...getFeaturesForCloudPlan(plan)];
+        return Array.from(
+          new Set([...getFeaturesForCloudPlan(plan), ...baseFeatures]),
+        );
       } catch {
-        return [];
+        return baseFeatures;
       }
     }
 
