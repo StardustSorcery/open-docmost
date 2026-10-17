@@ -89,5 +89,43 @@ describe('OidcAuthController', () => {
       expect(mockRes.status).toHaveBeenCalledWith(302);
       expect(mockRes.redirect).toHaveBeenCalledWith('/dashboard');
     });
+
+    it('should support staticCallback without explicit providerId', async () => {
+      oidcAuthService.handleCallback.mockResolvedValue({
+        authToken: 'jwt-auth-token',
+        redirectUrl: '/dashboard',
+      });
+
+      const mockReq: any = {
+        cookies: {
+          docmost_oidc_session: 'enc-cookie-data',
+        },
+        raw: {
+          url: '/api/sso/oidc/callback?code=123&state=abc',
+        },
+      };
+
+      const mockRes: any = {
+        clearCookie: jest.fn(),
+        setCookie: jest.fn(),
+        status: jest.fn().mockReturnThis(),
+        redirect: jest.fn(),
+      };
+
+      await controller.staticCallback(
+        { code: '123', state: 'abc' },
+        mockReq,
+        mockRes,
+      );
+
+      expect(oidcAuthService.handleCallback).toHaveBeenCalledWith(
+        undefined,
+        { code: '123', state: 'abc' },
+        'enc-cookie-data',
+        '/api/sso/oidc/callback?code=123&state=abc',
+      );
+      expect(mockRes.status).toHaveBeenCalledWith(302);
+      expect(mockRes.redirect).toHaveBeenCalledWith('/dashboard');
+    });
   });
 });
