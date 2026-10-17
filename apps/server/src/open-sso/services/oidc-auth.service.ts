@@ -270,6 +270,20 @@ export class OidcAuthService {
 
     validateAllowedEmail(email, workspace);
 
+    // Evaluate Role Mappings and enforce access control if configured
+    const roleMappings = this.getRoleMappings();
+    let assignedRole: 'admin' | 'member' = 'member';
+
+    if (roleMappings) {
+      const determinedRole = this.determineRole(claims?.groups, roleMappings);
+      if (!determinedRole) {
+        throw new ForbiddenException(
+          'Access denied: user does not belong to any authorized groups',
+        );
+      }
+      assignedRole = determinedRole;
+    }
+
     // 1. Look for existing user by email (email is the primary unique key)
     const existingUser = await this.userRepo.findByEmail(
       email.toLowerCase(),
@@ -345,7 +359,7 @@ export class OidcAuthService {
               name,
               email: email.toLowerCase(),
               password: generatedPassword,
-              role: 'member',
+              role: assignedRole,
               workspaceId: workspace.id,
               emailVerifiedAt: new Date(),
               hasGeneratedPassword: false,
@@ -399,6 +413,25 @@ export class OidcAuthService {
       }
     }
 
+    // Sync role for existing user if roleMappings is configured (protect workspace owner)
+    if (roleMappings && user.role !== 'owner' && user.role !== assignedRole) {
+      await this.userRepo.updateUser({ role: assignedRole }, user.id, workspace.id);
+      this.auditService.log({
+        event: AuditEvent.USER_ROLE_CHANGED,
+        resourceType: AuditResource.USER,
+        resourceId: user.id,
+        changes: {
+          before: { role: user.role },
+          after: { role: assignedRole },
+        },
+        metadata: {
+          source: 'oidc',
+          providerId: provider.id,
+        },
+      });
+      user.role = assignedRole;
+    }
+
     // 4. Group Sync if enabled
     if (provider.groupSync) {
       await this.syncGroups(user.id, workspace.id, claims?.groups);
@@ -421,6 +454,116 @@ export class OidcAuthService {
       authToken,
       redirectUrl: safeRedirect,
     };
+  }
+
+  public getRoleMappings(): {
+    adminGroups: Set<string>;
+    memberGroups: Set<string>;
+  } | null {
+    const raw = process.env.OIDC_ROLE_MAPPINGS;
+    if (!raw || !raw.trim()) {
+      return null;
+    }
+
+    const adminGroups = new Set<string>();
+    const memberGroups = new Set<string>();
+
+    const addMapping = (group: string, role: string) => {
+      const cleanGroup = group.trim().toLowerCase();
+      const cleanRole = role.trim().toLowerCase();
+      if (!cleanGroup) return;
+      if (cleanRole === 'admin') {
+        adminGroups.add(cleanGroup);
+      } else if (cleanRole === 'member') {
+        memberGroups.add(cleanGroup);
+      }
+    };
+
+    try {
+      if (raw.trim().startsWith('{')) {
+        const parsed = JSON.parse(raw);
+        for (const [key, value] of Object.entries(parsed)) {
+          const lowerKey = key.trim().toLowerCase();
+          if (lowerKey === 'admin' || lowerKey === 'member') {
+            // key is role, value is array of groups or a single group
+            if (Array.isArray(value)) {
+              for (const item of value) {
+                if (typeof item === 'string') {
+                  addMapping(item, lowerKey);
+                }
+              }
+            } else if (typeof value === 'string') {
+              addMapping(value, lowerKey);
+            }
+          } else if (typeof value === 'string') {
+            // key is group, value is role
+            addMapping(key, value);
+          }
+        }
+        return { adminGroups, memberGroups };
+      }
+    } catch (err: any) {
+      this.logger.warn(`Failed to parse OIDC_ROLE_MAPPINGS as JSON: ${err.message}`);
+    }
+
+    // Fallback: comma-separated pairs
+    const pairs = raw.split(',');
+    for (const pair of pairs) {
+      const trimmed = pair.trim();
+      if (!trimmed) continue;
+
+      const lastColon = trimmed.lastIndexOf(':');
+      const firstColon = trimmed.indexOf(':');
+
+      if (lastColon !== -1) {
+        const afterLast = trimmed.substring(lastColon + 1).trim().toLowerCase();
+        const beforeLast = trimmed.substring(0, lastColon).trim();
+
+        if (afterLast === 'admin' || afterLast === 'member') {
+          addMapping(beforeLast, afterLast);
+          continue;
+        }
+
+        const beforeFirst = trimmed.substring(0, firstColon).trim().toLowerCase();
+        const afterFirst = trimmed.substring(firstColon + 1).trim();
+        if (beforeFirst === 'admin' || beforeFirst === 'member') {
+          addMapping(afterFirst, beforeFirst);
+          continue;
+        }
+      }
+    }
+
+    return { adminGroups, memberGroups };
+  }
+
+  public determineRole(
+    groupsClaim: unknown,
+    roleMappings: { adminGroups: Set<string>; memberGroups: Set<string> },
+  ): 'admin' | 'member' | null {
+    const userGroups = new Set<string>();
+    if (Array.isArray(groupsClaim)) {
+      for (const g of groupsClaim) {
+        if (typeof g === 'string' && g.trim()) {
+          userGroups.add(g.trim().toLowerCase());
+        }
+      }
+    }
+
+    // Check admin groups first for higher privilege
+    for (const adminGroup of roleMappings.adminGroups) {
+      if (userGroups.has(adminGroup)) {
+        return 'admin';
+      }
+    }
+
+    // Check member groups
+    for (const memberGroup of roleMappings.memberGroups) {
+      if (userGroups.has(memberGroup)) {
+        return 'member';
+      }
+    }
+
+    return null;
   }
 
   private getGroupMappings(): Map<string, string> {
