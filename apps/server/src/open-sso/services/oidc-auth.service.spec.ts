@@ -334,6 +334,120 @@ describe('OidcAuthService', () => {
       );
     });
 
+    it('should update user name from OIDC claims if existing user has no name', async () => {
+      const sessionState = {
+        state: 'validState',
+        nonce: 'validNonce',
+        codeVerifier: 'verifier',
+        providerId: 'p1',
+        workspaceId: 'w1',
+      };
+      const cookieRaw = `enc:${JSON.stringify(sessionState)}`;
+
+      authProviderRepo.findEnabledById.mockResolvedValue({
+        id: 'p1',
+        type: 'oidc',
+        oidcIssuer: 'https://issuer.example.com',
+        oidcClientId: 'client-123',
+        oidcClientSecret: 'secret-456',
+        workspaceId: 'w1',
+      } as any);
+
+      workspaceRepo.findById.mockResolvedValue({
+        id: 'w1',
+        emailDomains: [],
+      } as any);
+
+      mockOpenIdClient.authorizationCodeGrant.mockResolvedValue({
+        claims: () => ({
+          sub: 'sub-user-3',
+          email: 'admin@example.com',
+          name: 'OIDC Admin Name',
+          email_verified: true,
+        }),
+      });
+
+      authAccountRepo.findByProviderUserId.mockResolvedValue(undefined);
+      userRepo.findByEmail.mockResolvedValue({
+        id: 'u3',
+        email: 'admin@example.com',
+        name: null,
+        workspaceId: 'w1',
+        emailVerifiedAt: new Date(),
+      } as any);
+
+      sessionService.createSessionAndToken.mockResolvedValue('jwt-token-admin');
+
+      await service.handleCallback(
+        'p1',
+        { code: 'authCode', state: 'validState' },
+        cookieRaw,
+      );
+
+      expect(userRepo.updateUser).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'OIDC Admin Name' }),
+        'u3',
+        'w1',
+      );
+    });
+
+    it('should not overwrite existing user name if user already has a name', async () => {
+      const sessionState = {
+        state: 'validState',
+        nonce: 'validNonce',
+        codeVerifier: 'verifier',
+        providerId: 'p1',
+        workspaceId: 'w1',
+      };
+      const cookieRaw = `enc:${JSON.stringify(sessionState)}`;
+
+      authProviderRepo.findEnabledById.mockResolvedValue({
+        id: 'p1',
+        type: 'oidc',
+        oidcIssuer: 'https://issuer.example.com',
+        oidcClientId: 'client-123',
+        oidcClientSecret: 'secret-456',
+        workspaceId: 'w1',
+      } as any);
+
+      workspaceRepo.findById.mockResolvedValue({
+        id: 'w1',
+        emailDomains: [],
+      } as any);
+
+      mockOpenIdClient.authorizationCodeGrant.mockResolvedValue({
+        claims: () => ({
+          sub: 'sub-user-4',
+          email: 'custom@example.com',
+          name: 'OIDC Claim Name',
+          email_verified: true,
+        }),
+      });
+
+      authAccountRepo.findByProviderUserId.mockResolvedValue(undefined);
+      userRepo.findByEmail.mockResolvedValue({
+        id: 'u4',
+        email: 'custom@example.com',
+        name: 'Explicit Custom Name',
+        workspaceId: 'w1',
+        emailVerifiedAt: new Date(),
+      } as any);
+
+      sessionService.createSessionAndToken.mockResolvedValue('jwt-token-custom');
+
+      await service.handleCallback(
+        'p1',
+        { code: 'authCode', state: 'validState' },
+        cookieRaw,
+      );
+
+      expect(userRepo.updateUser).not.toHaveBeenCalledWith(
+        expect.objectContaining({ name: expect.anything() }),
+        'u4',
+        'w1',
+      );
+    });
+
     describe('group sync (RBAC)', () => {
       const originalEnv = process.env.OIDC_GROUP_MAPPINGS;
 

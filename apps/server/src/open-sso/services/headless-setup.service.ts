@@ -57,7 +57,7 @@ export class HeadlessSetupService implements OnApplicationBootstrap {
         );
       }
 
-      const adminName = process.env.SETUP_ADMIN_NAME || 'Admin';
+      const adminName = process.env.SETUP_ADMIN_NAME || null;
 
       const workspaceName = process.env.SETUP_WORKSPACE_NAME || 'Docmost';
 

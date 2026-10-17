@@ -129,7 +129,7 @@ describe('HeadlessSetupService', () => {
       ).toHaveBeenCalledTimes(1);
     });
 
-    it('should successfully perform headless setup with default name, workspaceName, and auto-generated password', async () => {
+    it('should successfully perform headless setup with null name (for OIDC sync), default workspaceName, and auto-generated password', async () => {
       // Arrange
       workspaceRepo.count.mockResolvedValue(0);
       process.env.SETUP_ADMIN_EMAIL = 'admin@example.com';
@@ -146,7 +146,7 @@ describe('HeadlessSetupService', () => {
       expect(result).toBe(true);
       expect(signupService.initialSetup).toHaveBeenCalledWith(
         expect.objectContaining({
-          name: 'Admin',
+          name: null,
           email: 'admin@example.com',
           workspaceName: 'Docmost',
         }),

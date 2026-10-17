@@ -115,8 +115,7 @@ export class UserRepo {
     opts?: { pageEditMode?: string },
   ): Promise<User> {
     const user: InsertableUser = {
-      name:
-        insertableUser.name || insertableUser.email.split('@')[0].toLowerCase(),
+      name: insertableUser.name ?? null,
       email: insertableUser.email.toLowerCase(),
       password: await hashPassword(insertableUser.password),
       locale: 'en-US',

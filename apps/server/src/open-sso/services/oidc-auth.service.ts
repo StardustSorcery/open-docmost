@@ -298,12 +298,16 @@ export class OidcAuthService {
         });
       }
 
+      const updateData: Record<string, any> = {};
       if (!user.emailVerifiedAt) {
-        await this.userRepo.updateUser(
-          { emailVerifiedAt: new Date() },
-          user.id,
-          workspace.id,
-        );
+        updateData.emailVerifiedAt = new Date();
+      }
+      if (!user.name && name) {
+        updateData.name = name;
+        user.name = name;
+      }
+      if (Object.keys(updateData).length > 0) {
+        await this.userRepo.updateUser(updateData, user.id, workspace.id);
       }
     } else {
       // 2. Check existing AuthAccount by providerUserId as fallback
@@ -321,6 +325,11 @@ export class OidcAuthService {
           throw new UnauthorizedException('User account is disabled or not found');
         }
         user = foundUser;
+
+        if (!user.name && name) {
+          await this.userRepo.updateUser({ name }, user.id, workspace.id);
+          user.name = name;
+        }
       } else {
         // 3. Register new user
         if (!provider.allowSignup) {
