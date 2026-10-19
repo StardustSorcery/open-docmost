@@ -562,6 +562,316 @@ describe('OidcAuthService', () => {
         expect(groupUserRepo.delete).not.toHaveBeenCalledWith('u1', 'g-everyone');
       });
     });
+
+    describe('OIDC_ROLE_MAPPINGS & Access Control', () => {
+      const originalRoleEnv = process.env.OIDC_ROLE_MAPPINGS;
+
+      afterEach(() => {
+        if (originalRoleEnv !== undefined) {
+          process.env.OIDC_ROLE_MAPPINGS = originalRoleEnv;
+        } else {
+          delete process.env.OIDC_ROLE_MAPPINGS;
+        }
+      });
+
+      it('should parse JSON role mapping with roles as keys', () => {
+        process.env.OIDC_ROLE_MAPPINGS = JSON.stringify({
+          admin: ['cosmos:note-dev:admin'],
+          member: ['cosmos:note-dev:general-user'],
+        });
+        const mapping = service.getRoleMappings();
+        expect(mapping).not.toBeNull();
+        expect(mapping?.adminGroups.has('cosmos:note-dev:admin')).toBe(true);
+        expect(mapping?.memberGroups.has('cosmos:note-dev:general-user')).toBe(true);
+      });
+
+      it('should parse JSON role mapping with groups as keys', () => {
+        process.env.OIDC_ROLE_MAPPINGS = JSON.stringify({
+          'cosmos:note-dev:admin': 'admin',
+          'cosmos:note-dev:general-user': 'member',
+        });
+        const mapping = service.getRoleMappings();
+        expect(mapping).not.toBeNull();
+        expect(mapping?.adminGroups.has('cosmos:note-dev:admin')).toBe(true);
+        expect(mapping?.memberGroups.has('cosmos:note-dev:general-user')).toBe(true);
+      });
+
+      it('should parse comma-separated role mappings', () => {
+        process.env.OIDC_ROLE_MAPPINGS =
+          'cosmos:note-dev:admin:admin,cosmos:note-dev:general-user:member';
+        const mapping = service.getRoleMappings();
+        expect(mapping).not.toBeNull();
+        expect(mapping?.adminGroups.has('cosmos:note-dev:admin')).toBe(true);
+        expect(mapping?.memberGroups.has('cosmos:note-dev:general-user')).toBe(true);
+      });
+
+      it('should return null when OIDC_ROLE_MAPPINGS is not set', () => {
+        delete process.env.OIDC_ROLE_MAPPINGS;
+        expect(service.getRoleMappings()).toBeNull();
+      });
+
+      it('determineRole should prioritize admin over member', () => {
+        const mappings = {
+          adminGroups: new Set(['cosmos:admin']),
+          memberGroups: new Set(['cosmos:user']),
+        };
+        expect(service.determineRole(['cosmos:admin', 'cosmos:user'], mappings)).toBe('admin');
+        expect(service.determineRole(['cosmos:user'], mappings)).toBe('member');
+        expect(service.determineRole(['cosmos:other'], mappings)).toBeNull();
+      });
+
+      it('should block access with ForbiddenException when user does not have any mapped group', async () => {
+        process.env.OIDC_ROLE_MAPPINGS = JSON.stringify({
+          admin: ['cosmos:note-dev:admin'],
+          member: ['cosmos:note-dev:general-user'],
+        });
+
+        const sessionState = {
+          state: 'validState',
+          nonce: 'validNonce',
+          codeVerifier: 'verifier',
+          providerId: 'p1',
+          workspaceId: 'w1',
+        };
+        const cookieRaw = `enc:${JSON.stringify(sessionState)}`;
+
+        authProviderRepo.findEnabledById.mockResolvedValue({
+          id: 'p1',
+          type: 'oidc',
+          oidcIssuer: 'https://issuer.example.com',
+          oidcClientId: 'client-123',
+          oidcClientSecret: 'secret-456',
+          workspaceId: 'w1',
+          allowSignup: true,
+        } as any);
+
+        workspaceRepo.findById.mockResolvedValue({
+          id: 'w1',
+          emailDomains: [],
+        } as any);
+
+        mockOpenIdClient.authorizationCodeGrant.mockResolvedValue({
+          claims: () => ({
+            sub: 'sub-unauthorized-user',
+            email: 'unauthorized@example.com',
+            name: 'Unauthorized User',
+            email_verified: true,
+            groups: ['other-unrelated-group'],
+          }),
+        });
+
+        await expect(
+          service.handleCallback(
+            'p1',
+            { code: 'authCode', state: 'validState' },
+            cookieRaw,
+          ),
+        ).rejects.toThrow('Access denied: user does not belong to any authorized groups');
+      });
+
+      it('should create new user with admin role when matching admin group', async () => {
+        process.env.OIDC_ROLE_MAPPINGS = JSON.stringify({
+          admin: ['cosmos:note-dev:admin'],
+          member: ['cosmos:note-dev:general-user'],
+        });
+
+        const sessionState = {
+          state: 'validState',
+          nonce: 'validNonce',
+          codeVerifier: 'verifier',
+          providerId: 'p1',
+          workspaceId: 'w1',
+        };
+        const cookieRaw = `enc:${JSON.stringify(sessionState)}`;
+
+        authProviderRepo.findEnabledById.mockResolvedValue({
+          id: 'p1',
+          type: 'oidc',
+          oidcIssuer: 'https://issuer.example.com',
+          oidcClientId: 'client-123',
+          oidcClientSecret: 'secret-456',
+          workspaceId: 'w1',
+          allowSignup: true,
+        } as any);
+
+        workspaceRepo.findById.mockResolvedValue({
+          id: 'w1',
+          emailDomains: [],
+        } as any);
+
+        mockOpenIdClient.authorizationCodeGrant.mockResolvedValue({
+          claims: () => ({
+            sub: 'sub-admin-user',
+            email: 'admin-user@example.com',
+            name: 'Admin User',
+            email_verified: true,
+            groups: ['cosmos:note-dev:admin'],
+          }),
+        });
+
+        authAccountRepo.findByProviderUserId.mockResolvedValue(undefined);
+        userRepo.findByEmail.mockResolvedValue(undefined);
+        userRepo.insertUser.mockResolvedValue({
+          id: 'u-admin',
+          email: 'admin-user@example.com',
+          role: 'admin',
+          workspaceId: 'w1',
+        } as any);
+        sessionService.createSessionAndToken.mockResolvedValue('jwt-token-admin');
+
+        await service.handleCallback(
+          'p1',
+          { code: 'authCode', state: 'validState' },
+          cookieRaw,
+        );
+
+        expect(userRepo.insertUser).toHaveBeenCalledWith(
+          expect.objectContaining({
+            email: 'admin-user@example.com',
+            role: 'admin',
+          }),
+          expect.anything(),
+          expect.anything(),
+        );
+      });
+
+      it('should update existing member user to admin role when matching admin group', async () => {
+        process.env.OIDC_ROLE_MAPPINGS = JSON.stringify({
+          admin: ['cosmos:note-dev:admin'],
+          member: ['cosmos:note-dev:general-user'],
+        });
+
+        const sessionState = {
+          state: 'validState',
+          nonce: 'validNonce',
+          codeVerifier: 'verifier',
+          providerId: 'p1',
+          workspaceId: 'w1',
+        };
+        const cookieRaw = `enc:${JSON.stringify(sessionState)}`;
+
+        authProviderRepo.findEnabledById.mockResolvedValue({
+          id: 'p1',
+          type: 'oidc',
+          oidcIssuer: 'https://issuer.example.com',
+          oidcClientId: 'client-123',
+          oidcClientSecret: 'secret-456',
+          workspaceId: 'w1',
+          allowSignup: true,
+        } as any);
+
+        workspaceRepo.findById.mockResolvedValue({
+          id: 'w1',
+          emailDomains: [],
+        } as any);
+
+        mockOpenIdClient.authorizationCodeGrant.mockResolvedValue({
+          claims: () => ({
+            sub: 'sub-existing-user',
+            email: 'existing@example.com',
+            name: 'Existing User',
+            email_verified: true,
+            groups: ['cosmos:note-dev:admin'],
+          }),
+        });
+
+        authAccountRepo.findByProviderUserId.mockResolvedValue({ id: 'acc1', userId: 'u-existing' } as any);
+        userRepo.findByEmail.mockResolvedValue({
+          id: 'u-existing',
+          email: 'existing@example.com',
+          role: 'member',
+          workspaceId: 'w1',
+          emailVerifiedAt: new Date(),
+        } as any);
+        sessionService.createSessionAndToken.mockResolvedValue('jwt-token-updated');
+
+        await service.handleCallback(
+          'p1',
+          { code: 'authCode', state: 'validState' },
+          cookieRaw,
+        );
+
+        expect(userRepo.updateUser).toHaveBeenCalledWith(
+          { role: 'admin' },
+          'u-existing',
+          'w1',
+        );
+        expect(auditService.log).toHaveBeenCalledWith(
+          expect.objectContaining({
+            event: 'user.role_changed',
+            resourceId: 'u-existing',
+            changes: {
+              before: { role: 'member' },
+              after: { role: 'admin' },
+            },
+          }),
+        );
+      });
+
+      it('should protect workspace owner from role changes', async () => {
+        process.env.OIDC_ROLE_MAPPINGS = JSON.stringify({
+          admin: ['cosmos:note-dev:admin'],
+          member: ['cosmos:note-dev:general-user'],
+        });
+
+        const sessionState = {
+          state: 'validState',
+          nonce: 'validNonce',
+          codeVerifier: 'verifier',
+          providerId: 'p1',
+          workspaceId: 'w1',
+        };
+        const cookieRaw = `enc:${JSON.stringify(sessionState)}`;
+
+        authProviderRepo.findEnabledById.mockResolvedValue({
+          id: 'p1',
+          type: 'oidc',
+          oidcIssuer: 'https://issuer.example.com',
+          oidcClientId: 'client-123',
+          oidcClientSecret: 'secret-456',
+          workspaceId: 'w1',
+          allowSignup: true,
+        } as any);
+
+        workspaceRepo.findById.mockResolvedValue({
+          id: 'w1',
+          emailDomains: [],
+        } as any);
+
+        mockOpenIdClient.authorizationCodeGrant.mockResolvedValue({
+          claims: () => ({
+            sub: 'sub-owner-user',
+            email: 'owner@example.com',
+            name: 'Owner User',
+            email_verified: true,
+            groups: ['cosmos:note-dev:general-user'],
+          }),
+        });
+
+        authAccountRepo.findByProviderUserId.mockResolvedValue({ id: 'acc-owner', userId: 'u-owner' } as any);
+        userRepo.findByEmail.mockResolvedValue({
+          id: 'u-owner',
+          email: 'owner@example.com',
+          role: 'owner',
+          workspaceId: 'w1',
+          emailVerifiedAt: new Date(),
+        } as any);
+        sessionService.createSessionAndToken.mockResolvedValue('jwt-token-owner');
+
+        await service.handleCallback(
+          'p1',
+          { code: 'authCode', state: 'validState' },
+          cookieRaw,
+        );
+
+        // Should NOT update role when user is owner
+        expect(userRepo.updateUser).not.toHaveBeenCalledWith(
+          expect.objectContaining({ role: expect.anything() }),
+          'u-owner',
+          'w1',
+        );
+      });
+    });
   });
 });
 
