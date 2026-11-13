@@ -19,6 +19,8 @@ export enum EncryptionPurpose {
   SIEM_CREDENTIALS = 'siem-credentials',
   INTEGRATION_TOKENS = 'integration-tokens',
   OAUTH_COMPLETION = 'oauth-completion',
+  SSO_CREDENTIALS = 'sso-credentials',
+  OIDC_SESSION = 'oidc-session',
 }
 
 const KEY_ID = 'app-secret';
@@ -75,9 +77,12 @@ export class EncryptionService {
       this.assertPurpose(purpose);
       const decoded = this.decode(encrypted);
       if (decoded.version === 1) {
-        if (purpose !== EncryptionPurpose.SIEM_CREDENTIALS) {
+        if (
+          purpose !== EncryptionPurpose.SIEM_CREDENTIALS &&
+          purpose !== EncryptionPurpose.SSO_CREDENTIALS
+        ) {
           throw new Error(
-            'Legacy ciphertext is only supported for SIEM credentials.',
+            'Legacy ciphertext is only supported for SIEM and SSO credentials.',
           );
         }
         return this.decryptLegacy(decoded.payload);

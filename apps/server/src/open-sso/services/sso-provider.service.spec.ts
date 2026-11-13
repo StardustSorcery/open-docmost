@@ -1,6 +1,9 @@
 import { SsoProviderService } from './sso-provider.service';
 import { AuthProviderRepo } from '../repos/auth-provider.repo';
-import { EncryptionService } from '../../integrations/encryption/encryption.service';
+import {
+  EncryptionPurpose,
+  EncryptionService,
+} from '../../integrations/encryption/encryption.service';
 import { WorkspaceRepo } from '@docmost/db/repos/workspace/workspace.repo';
 
 describe('SsoProviderService', () => {
@@ -142,7 +145,10 @@ describe('SsoProviderService', () => {
         'w1',
       );
 
-      expect(encryptionService.encrypt).toHaveBeenCalledWith('newSecret');
+      expect(encryptionService.encrypt).toHaveBeenCalledWith(
+        'newSecret',
+        EncryptionPurpose.SSO_CREDENTIALS,
+      );
       expect(authProviderRepo.updateProvider).toHaveBeenCalledWith(
         expect.objectContaining({
           name: 'Updated OIDC',
