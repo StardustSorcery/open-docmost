@@ -14,7 +14,10 @@ import { AuthProviderRepo } from '../repos/auth-provider.repo';
 import { AuthAccountRepo } from '../repos/auth-account.repo';
 import { SsoProviderService } from './sso-provider.service';
 import { EnvironmentService } from '../../integrations/environment/environment.service';
-import { EncryptionService } from '../../integrations/encryption/encryption.service';
+import {
+  EncryptionPurpose,
+  EncryptionService,
+} from '../../integrations/encryption/encryption.service';
 import { WorkspaceRepo } from '@docmost/db/repos/workspace/workspace.repo';
 import { UserRepo } from '@docmost/db/repos/user/user.repo';
 import { WorkspaceService } from '../../core/workspace/services/workspace.service';
@@ -124,6 +127,7 @@ export class OidcAuthService {
 
     const sessionCookie = this.encryptionService.encrypt(
       JSON.stringify(sessionPayload),
+      EncryptionPurpose.OIDC_SESSION,
     );
 
     return {
@@ -153,7 +157,10 @@ export class OidcAuthService {
 
     let sessionState: OidcSessionState;
     try {
-      const decrypted = this.encryptionService.decrypt(cookieRaw);
+      const decrypted = this.encryptionService.decrypt(
+        cookieRaw,
+        EncryptionPurpose.OIDC_SESSION,
+      );
       sessionState = JSON.parse(decrypted);
     } catch {
       throw new BadRequestException('Invalid or expired OIDC session cookie');

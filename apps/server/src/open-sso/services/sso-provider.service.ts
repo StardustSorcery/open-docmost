@@ -6,7 +6,10 @@ import {
   OnApplicationBootstrap,
 } from '@nestjs/common';
 import { AuthProviderRepo } from '../repos/auth-provider.repo';
-import { EncryptionService } from '../../integrations/encryption/encryption.service';
+import {
+  EncryptionPurpose,
+  EncryptionService,
+} from '../../integrations/encryption/encryption.service';
 import { CreateSsoProviderDto } from '../dto/create-sso-provider.dto';
 import { UpdateSsoProviderDto } from '../dto/update-sso-provider.dto';
 import { AuthProvider, Workspace } from '@docmost/db/types/entity.types';
@@ -218,7 +221,10 @@ export class SsoProviderService implements OnApplicationBootstrap {
 
   private encryptSecret(secret: string): string {
     try {
-      return this.encryptionService.encrypt(secret);
+      return this.encryptionService.encrypt(
+        secret,
+        EncryptionPurpose.SSO_CREDENTIALS,
+      );
     } catch {
       return secret;
     }
@@ -227,7 +233,10 @@ export class SsoProviderService implements OnApplicationBootstrap {
   public decryptSecret(secret: string | null): string | null {
     if (!secret) return null;
     try {
-      return this.encryptionService.decrypt(secret);
+      return this.encryptionService.decrypt(
+        secret,
+        EncryptionPurpose.SSO_CREDENTIALS,
+      );
     } catch {
       return secret;
     }
